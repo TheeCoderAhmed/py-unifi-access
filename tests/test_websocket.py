@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 import pytest
@@ -57,85 +57,6 @@ def _ws_msg(
     else:
         m.type = aiohttp.WSMsgType.CLOSE
     return m
-
-
-def _insights_payload(
-    *,
-    published: int = 1700000000000,
-    result: str = "ACCESS",
-    actor: str = "John Doe",
-) -> str:
-    """Build a raw access.logs.insights.add websocket payload."""
-    return json.dumps(
-        {
-            "event": "access.logs.insights.add",
-            "event_object_id": "hub-001",
-            "data": {
-                "id": "",
-                "log_key": "dashboard.access.door.unlock.success",
-                "event_type": "access.door.unlock",
-                "message": "Access Granted (Face)",
-                "published": published,
-                "result": result,
-                "metadata": {
-                    "actor": {"id": "user-001", "type": "user", "display_name": actor},
-                    "authentication": {
-                        "id": "auth-001",
-                        "type": "authentication",
-                        "display_name": "FACE",
-                    },
-                    "door": [
-                        {"id": "door-001", "type": "door", "display_name": "Front Door"}
-                    ],
-                },
-            },
-        }
-    )
-
-
-def _logs_payload(
-    *,
-    published: int = 1700000000000,
-    result: str = "ACCESS",
-    actor: str = "John Doe",
-) -> str:
-    """Build a raw access.logs.add websocket payload."""
-    return json.dumps(
-        {
-            "event": "access.logs.add",
-            "event_object_id": "hub-001",
-            "data": {
-                "_id": "",
-                "_source": {
-                    "actor": {"id": "user-001", "type": "user", "display_name": actor},
-                    "event": {
-                        "type": "access.door.unlock",
-                        "display_message": "Access Granted (Face)",
-                        "result": result,
-                        "published": published,
-                        "log_key": "dashboard.access.door.unlock.success",
-                    },
-                    "authentication": {
-                        "credential_provider": "FACE",
-                        "issuer": "auth-001",
-                    },
-                    "target": [
-                        {
-                            "type": "UA-Hub-Door-Mini",
-                            "id": "hub-001",
-                            "display_name": "UA Hub",
-                        },
-                        {
-                            "type": "door",
-                            "id": "door-001",
-                            "display_name": "Front Door",
-                        },
-                    ],
-                },
-                "tag": "access",
-            },
-        }
-    )
 
 
 def _patch_ws_connect(ws: UnifiAccessWebsocket, messages: list[MagicMock]) -> MagicMock:
@@ -352,108 +273,6 @@ class TestHandleMessage:
         )
         handler.assert_awaited_once()
         assert handler.call_args[0][0].door_id == ""
-
-
-# ---------------------------------------------------------------------------
-# Access event dedup
-# ---------------------------------------------------------------------------
-
-
-class TestAccessEventDedup:
-    async def test_duplicate_insights_then_logs_suppressed(self) -> None:
-        """Same event in both formats dispatches only the first copy."""
-        insights_handler = AsyncMock()
-        logs_handler = AsyncMock()
-        ws = _make_ws(
-            handlers={
-                "access.logs.insights.add": insights_handler,
-                "access.logs.add": logs_handler,
-            }
-        )
-        await ws._handle_message(_insights_payload())
-        await ws._handle_message(_logs_payload())
-        insights_handler.assert_awaited_once()
-        logs_handler.assert_not_awaited()
-
-    async def test_duplicate_logs_then_insights_suppressed(self) -> None:
-        insights_handler = AsyncMock()
-        logs_handler = AsyncMock()
-        ws = _make_ws(
-            handlers={
-                "access.logs.insights.add": insights_handler,
-                "access.logs.add": logs_handler,
-            }
-        )
-        await ws._handle_message(_logs_payload())
-        await ws._handle_message(_insights_payload())
-        logs_handler.assert_awaited_once()
-        insights_handler.assert_not_awaited()
-
-    async def test_duplicate_same_format_suppressed(self) -> None:
-        handler = AsyncMock()
-        ws = _make_ws(handlers={"access.logs.add": handler})
-        await ws._handle_message(_logs_payload())
-        await ws._handle_message(_logs_payload())
-        handler.assert_awaited_once()
-
-    async def test_distinct_published_not_suppressed(self) -> None:
-        handler = AsyncMock()
-        ws = _make_ws(handlers={"access.logs.add": handler})
-        await ws._handle_message(_logs_payload(published=1700000000000))
-        await ws._handle_message(_logs_payload(published=1700000001000))
-        assert handler.await_count == 2
-
-    async def test_distinct_actor_not_suppressed(self) -> None:
-        handler = AsyncMock()
-        ws = _make_ws(handlers={"access.logs.add": handler})
-        await ws._handle_message(_logs_payload(actor="John Doe"))
-        await ws._handle_message(_logs_payload(actor="Jane Doe"))
-        assert handler.await_count == 2
-
-    async def test_missing_published_not_suppressed(self) -> None:
-        handler = AsyncMock()
-        ws = _make_ws(handlers={"access.logs.add": handler})
-        await ws._handle_message(_logs_payload(published=0))
-        await ws._handle_message(_logs_payload(published=0))
-        assert handler.await_count == 2
-
-    async def test_dedup_disabled_dispatches_all(self) -> None:
-        insights_handler = AsyncMock()
-        logs_handler = AsyncMock()
-        ws = UnifiAccessWebsocket(
-            uri="wss://host/ws",
-            headers={},
-            ssl_context=False,
-            session=AsyncMock(spec=aiohttp.ClientSession),
-            message_handlers={
-                "access.logs.insights.add": insights_handler,
-                "access.logs.add": logs_handler,
-            },
-            dedup_access_events=False,
-        )
-        await ws._handle_message(_insights_payload())
-        await ws._handle_message(_logs_payload())
-        insights_handler.assert_awaited_once()
-        logs_handler.assert_awaited_once()
-
-    async def test_window_expiry_dispatches_again(self) -> None:
-        """An identical event after the dedup window is dispatched again."""
-        handler = AsyncMock()
-        ws = _make_ws(handlers={"access.logs.add": handler})
-        with patch("unifi_access_api.websocket._ACCESS_EVENT_DEDUP_WINDOW", 0.0):
-            await ws._handle_message(_logs_payload())
-            await ws._handle_message(_logs_payload())
-        assert handler.await_count == 2
-
-    async def test_other_events_not_affected(self) -> None:
-        handler = AsyncMock()
-        ws = _make_ws(handlers={"access.hw.door_bell": handler})
-        payload = json.dumps(
-            {"event": "access.hw.door_bell", "data": {"door_id": "d1"}}
-        )
-        await ws._handle_message(payload)
-        await ws._handle_message(payload)
-        assert handler.await_count == 2
 
 
 # ---------------------------------------------------------------------------

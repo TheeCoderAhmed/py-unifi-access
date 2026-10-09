@@ -197,7 +197,7 @@ class LogEvent(BaseModel, frozen=True):
 
     type: str = ""
     result: str = ""
-    published: int = 0
+    published: int | None = 0
 
     model_config = {"extra": "allow"}
 
@@ -206,6 +206,7 @@ class LogAuthentication(BaseModel, frozen=True):
     """Authentication details in an access log."""
 
     credential_provider: str = ""
+    issuer: str = ""
 
     model_config = {"extra": "allow"}
 

@@ -297,6 +297,68 @@ class TestCreateFromUnifiDict:
         assert isinstance(msg, LogAdd)
         assert msg.data.source.actor.display_name == "Jane"
 
+    def test_log_event_published_typed(self) -> None:
+        """event.published is a typed field (used for event correlation)."""
+        raw: dict[str, Any] = {
+            "event": "access.logs.add",
+            "data": {
+                "_source": {
+                    "actor": {"display_name": "Admin"},
+                    "event": {"result": "ACCESS", "published": 1791469297},
+                }
+            },
+        }
+        msg = create_from_unifi_dict(raw)
+        assert isinstance(msg, LogAdd)
+        assert msg.data.source.event.published == 1791469297
+
+    def test_log_event_published_null_and_default(self) -> None:
+        """A null published parses as None; a missing one defaults to 0."""
+        raw: dict[str, Any] = {
+            "event": "access.logs.add",
+            "data": {
+                "_source": {
+                    "actor": {"display_name": "Admin"},
+                    "event": {"result": "ACCESS", "published": None},
+                }
+            },
+        }
+        msg = create_from_unifi_dict(raw)
+        assert isinstance(msg, LogAdd)
+        assert msg.data.source.event.published is None
+
+        raw_missing: dict[str, Any] = {
+            "event": "access.logs.add",
+            "data": {
+                "_source": {
+                    "actor": {"display_name": "Admin"},
+                    "event": {"result": "ACCESS"},
+                }
+            },
+        }
+        msg_missing = create_from_unifi_dict(raw_missing)
+        assert isinstance(msg_missing, LogAdd)
+        assert msg_missing.data.source.event.published == 0
+
+    def test_log_authentication_issuer_typed(self) -> None:
+        """authentication.issuer is a typed field (used for event correlation)."""
+        raw: dict[str, Any] = {
+            "event": "access.logs.add",
+            "data": {
+                "_source": {
+                    "actor": {"display_name": "Admin"},
+                    "authentication": {
+                        "credential_provider": "FACE",
+                        "issuer": "auth-001",
+                    },
+                }
+            },
+        }
+        msg = create_from_unifi_dict(raw)
+        assert isinstance(msg, LogAdd)
+        assert msg.data.source.authentication.issuer == "auth-001"
+        assert msg.data.source.authentication.credential_provider == "FACE"
+
     def test_log_event_direction_field_not_typed(self) -> None:
         """event.direction is not a typed field — real API always sends it empty.
 
