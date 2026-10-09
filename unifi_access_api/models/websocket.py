@@ -197,6 +197,7 @@ class LogEvent(BaseModel, frozen=True):
 
     type: str = ""
     result: str = ""
+    published: int = 0
 
     model_config = {"extra": "allow"}
 

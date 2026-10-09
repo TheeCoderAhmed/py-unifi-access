@@ -391,6 +391,7 @@ class UnifiAccessApiClient:
         on_connect: Callable[[], Any] | None = None,
         on_disconnect: Callable[[], Any] | None = None,
         on_raw_message: WsRawMessageHandler | None = None,
+        dedup_access_events: bool = True,
         reconnect_interval: int = 1,
         max_retries: int | None = None,
     ) -> UnifiAccessWebsocket:
@@ -433,6 +434,7 @@ class UnifiAccessApiClient:
             on_disconnect=on_disconnect,
             on_raw_message=on_raw_message,
             message_enricher=self._enrich_ws_message,
+            dedup_access_events=dedup_access_events,
             reconnect_interval=reconnect_interval,
             max_retries=max_retries,
         )

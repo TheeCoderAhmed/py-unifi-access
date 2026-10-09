@@ -8,12 +8,18 @@ import inspect
 import json
 import logging
 import ssl
+import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 
 import aiohttp
 
-from .models.websocket import WebsocketMessage, create_from_unifi_dict
+from .models.websocket import (
+    InsightsAdd,
+    LogAdd,
+    WebsocketMessage,
+    create_from_unifi_dict,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,6 +27,7 @@ _BACKOFF_MIN = 1
 _BACKOFF_MAX = 60
 _BACKOFF_FACTOR = 2
 _WS_HEARTBEAT = 30
+_ACCESS_EVENT_DEDUP_WINDOW = 10.0
 
 WsMessageHandler = Callable[[WebsocketMessage], Coroutine[Any, Any, None] | None]
 WsRawMessageHandler = Callable[[dict[str, Any]], Coroutine[Any, Any, None] | None]
@@ -42,6 +49,7 @@ class UnifiAccessWebsocket:
         on_disconnect: Callable[[], Any] | None = None,
         on_raw_message: WsRawMessageHandler | None = None,
         message_enricher: WsMessageEnricher | None = None,
+        dedup_access_events: bool = True,
         reconnect_interval: int = _BACKOFF_MIN,
         max_retries: int | None = None,
     ) -> None:
@@ -56,10 +64,12 @@ class UnifiAccessWebsocket:
         self._on_disconnect = on_disconnect
         self._on_raw_message = on_raw_message
         self._message_enricher = message_enricher
+        self._dedup_access_events = dedup_access_events
         self._reconnect_interval = reconnect_interval
         self._max_retries = max_retries
         self._task: asyncio.Task[None] | None = None
         self._connected = False
+        self._recent_access_events: dict[tuple[int, str, str], float] = {}
 
     @property
     def is_running(self) -> bool:
@@ -122,9 +132,48 @@ class UnifiAccessWebsocket:
         if handler is None:
             handler = self._message_handlers.get("*")
         if handler is not None:
+            if self._is_duplicate_access_event(parsed):
+                _LOGGER.debug("Suppressed duplicate access event: %s", event)
+                return
             await self._invoke(handler, parsed)
         else:
             _LOGGER.debug("Unhandled websocket message type: %s", event)
+
+    def _is_duplicate_access_event(self, msg: WebsocketMessage) -> bool:
+        """
+        Record an access event and return True when a duplicate should be dropped.
+
+        A single door event can be delivered twice by the device — once as an
+        ``access.logs.insights.add`` message and again as an
+        ``access.logs.add`` message. The first copy is kept; the second is
+        suppressed when both share the same published timestamp, result and
+        actor within the dedup window.
+        """
+        if not self._dedup_access_events:
+            return False
+        if isinstance(msg, InsightsAdd):
+            published = msg.data.published
+            result = msg.data.result
+            actor = msg.data.metadata.actor.display_name
+        elif isinstance(msg, LogAdd):
+            published = msg.data.source.event.published
+            result = msg.data.source.event.result
+            actor = msg.data.source.actor.display_name
+        else:
+            return False
+        if not published:
+            return False
+        now = time.monotonic()
+        self._recent_access_events = {
+            key: seen_at
+            for key, seen_at in self._recent_access_events.items()
+            if now - seen_at <= _ACCESS_EVENT_DEDUP_WINDOW
+        }
+        key = (published, result, actor)
+        if key in self._recent_access_events:
+            return True
+        self._recent_access_events[key] = now
+        return False
 
     async def _loop(self) -> None:
         """Run websocket connection with automatic reconnection and backoff."""
