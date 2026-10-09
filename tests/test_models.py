@@ -304,16 +304,32 @@ class TestCreateFromUnifiDict:
             "data": {
                 "_source": {
                     "actor": {"display_name": "Admin"},
-                    "event": {"result": "ACCESS", "published": 1791469297},
+                    # real payloads carry a millisecond timestamp
+                    "event": {"result": "ACCESS", "published": 1791469297000},
                 }
             },
         }
         msg = create_from_unifi_dict(raw)
         assert isinstance(msg, LogAdd)
-        assert msg.data.source.event.published == 1791469297
+        assert msg.data.source.event.published == 1791469297000
 
-    def test_log_event_published_null_and_default(self) -> None:
-        """A null published parses as None; a missing one defaults to 0."""
+    def test_log_event_published_decimal_coerced(self) -> None:
+        """An integral float published value is coerced to int."""
+        raw: dict[str, Any] = {
+            "event": "access.logs.add",
+            "data": {
+                "_source": {
+                    "actor": {"display_name": "Admin"},
+                    "event": {"result": "ACCESS", "published": 1791469297000.0},
+                }
+            },
+        }
+        msg = create_from_unifi_dict(raw)
+        assert isinstance(msg, LogAdd)
+        assert msg.data.source.event.published == 1791469297000
+
+    def test_log_event_published_null_or_missing(self) -> None:
+        """A null or missing published parses as None."""
         raw: dict[str, Any] = {
             "event": "access.logs.add",
             "data": {
@@ -338,7 +354,7 @@ class TestCreateFromUnifiDict:
         }
         msg_missing = create_from_unifi_dict(raw_missing)
         assert isinstance(msg_missing, LogAdd)
-        assert msg_missing.data.source.event.published == 0
+        assert msg_missing.data.source.event.published is None
 
     def test_log_authentication_issuer_typed(self) -> None:
         """authentication.issuer is a typed field (used for event correlation)."""
@@ -358,6 +374,49 @@ class TestCreateFromUnifiDict:
         assert isinstance(msg, LogAdd)
         assert msg.data.source.authentication.issuer == "auth-001"
         assert msg.data.source.authentication.credential_provider == "FACE"
+
+    def test_log_authentication_issuer_null_or_missing(self) -> None:
+        """A null or missing issuer parses as None."""
+        raw: dict[str, Any] = {
+            "event": "access.logs.add",
+            "data": {
+                "_source": {
+                    "actor": {"display_name": "Admin"},
+                    "authentication": {"credential_provider": "FACE", "issuer": None},
+                }
+            },
+        }
+        msg = create_from_unifi_dict(raw)
+        assert isinstance(msg, LogAdd)
+        assert msg.data.source.authentication.issuer is None
+
+        raw_missing: dict[str, Any] = {
+            "event": "access.logs.add",
+            "data": {
+                "_source": {
+                    "actor": {"display_name": "Admin"},
+                    "authentication": {"credential_provider": "FACE"},
+                }
+            },
+        }
+        msg_missing = create_from_unifi_dict(raw_missing)
+        assert isinstance(msg_missing, LogAdd)
+        assert msg_missing.data.source.authentication.issuer is None
+
+    def test_log_authentication_issuer_numeric_coerced(self) -> None:
+        """A numeric issuer is coerced to a string."""
+        raw: dict[str, Any] = {
+            "event": "access.logs.add",
+            "data": {
+                "_source": {
+                    "actor": {"display_name": "Admin"},
+                    "authentication": {"credential_provider": "FACE", "issuer": 42},
+                }
+            },
+        }
+        msg = create_from_unifi_dict(raw)
+        assert isinstance(msg, LogAdd)
+        assert msg.data.source.authentication.issuer == "42"
 
     def test_log_event_direction_field_not_typed(self) -> None:
         """event.direction is not a typed field — real API always sends it empty.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .door import (
     CoercedDoorPosition,
@@ -197,7 +197,7 @@ class LogEvent(BaseModel, frozen=True):
 
     type: str = ""
     result: str = ""
-    published: int | None = 0
+    published: int | None = None
 
     model_config = {"extra": "allow"}
 
@@ -206,9 +206,17 @@ class LogAuthentication(BaseModel, frozen=True):
     """Authentication details in an access log."""
 
     credential_provider: str = ""
-    issuer: str = ""
+    issuer: str | None = None
 
     model_config = {"extra": "allow"}
+
+    @field_validator("issuer", mode="before")
+    @classmethod
+    def _coerce_issuer(cls, value: Any) -> Any:
+        """Accept a numeric issuer by converting it to a string."""
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+        return value
 
 
 class LogSource(BaseModel, frozen=True):
@@ -546,7 +554,7 @@ class InsightsAddData(BaseModel, frozen=True):
     log_key: str = ""
     event_type: str = ""
     message: str = ""
-    published: int = 0
+    published: int | None = None
     result: str = ""
     metadata: InsightsMetadata = InsightsMetadata()
 
