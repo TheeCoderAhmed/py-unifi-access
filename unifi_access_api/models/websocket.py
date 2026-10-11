@@ -214,7 +214,7 @@ class LogAuthentication(BaseModel, frozen=True):
     @classmethod
     def _coerce_issuer(cls, value: Any) -> Any:
         """Accept a numeric issuer by converting it to a string."""
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, int | float) and not isinstance(value, bool):
             return str(value)
         return value
 
